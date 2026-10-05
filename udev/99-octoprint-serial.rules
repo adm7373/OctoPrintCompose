@@ -1,0 +1,40 @@
+# Stable names for the two printers' USB-serial devices.
+#
+# WHY THIS FILE EXISTS
+# The CR-6 SE and the Ender 3 Pro use the same USB-serial chip (CH340,
+# 1a86:7523), so they cannot be told apart by device ID. /dev/ttyUSB0 vs
+# /dev/ttyUSB1 just follows plug order, and if a printer reboots while another
+# is plugged in, they can swap. Matching on the USB *port path* instead gives
+# each printer a permanent name:
+#
+#     /dev/octoprint-cr6se   -> CR-6 SE
+#     /dev/octoprint-e3pro   -> Ender 3 Pro
+#
+# HOW TO USE
+#   1. Plug each printer into its own USB port and power both on.
+#   2. Run:  sudo ./scripts/find-printers.sh
+#      Note the "usb port" value it prints for each printer (e.g. 1-1.2, 1-1.4).
+#   3. Replace the two placeholders below with those values.
+#   4. Install and activate:
+#        sudo cp udev/99-octoprint-serial.rules /etc/udev/rules.d/
+#        sudo udevadm control --reload-rules && sudo udevadm trigger
+#   5. Confirm:
+#        ls -l /dev/octoprint-cr6se /dev/octoprint-e3pro
+#
+# Each printer must be on its own, fixed port. If you move one, update the rule.
+#
+# KERNELS values are the USB port paths. Find yours from the "usb port" line in
+# find-printers.sh output, or:  lsusb -t   (the numbers before the interface)
+
+# --- Creality CR-6 SE ------------------------------------------------------
+# Replace CR6SE_USB_PORT with this printer's USB port path, e.g. 1-1.2
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", KERNELS=="CR6SE_USB_PORT", SYMLINK+="octoprint-cr6se", MODE="0660", GROUP="dialout"
+
+# --- Creality Ender 3 Pro (direct drive) ------------------------------------
+# Replace E3PRO_USB_PORT with this printer's USB port path, e.g. 1-1.4
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", KERNELS=="E3PRO_USB_PORT", SYMLINK+="octoprint-e3pro", MODE="0660", GROUP="dialout"
+
+# --- If a board reports the newer CH9102 chip (1a86:55d4) ------------------
+# Duplicate the two rules above and use these two attribute values instead:
+#   ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4"
+# find-printers.sh prints the vid:pid it actually sees, so check it first.

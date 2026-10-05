@@ -1,0 +1,145 @@
+# OctoPrint Compose — Two Creality Printers on One Raspberry Pi
+#
+# One independent OctoPrint instance per printer. Each gets its own config
+# directory, its own serial device and its own host port, so a crash, a bad
+# firmware flash or a hung print on one printer cannot affect the other.
+#
+# Printers
+#   - Creality CR-6 SE       (stock Creality mainboard, Marlin firmware)
+#   - Creality Ender 3 Pro   (stock Creality mainboard, Marlin firmware, direct drive)
+#
+# Both talk to OctoPrint over the USB-serial port already present on the
+# printer's mainboard — no wiring or board mods required, just a USB *data*
+# cable. See README.md for hardware notes (powered hub, separate printer PSUs).
+#
+# Port Mappings
+# -----------------------------------------
+# Service          | Host port | Printer
+# -----------------|-----------|----------------------------------
+# octoprint-cr6se  | 5000      | Creality CR-6 SE
+# octoprint-e3pro  | 5001      | Creality Ender 3 Pro (direct drive)
+#
+# SERIAL DEVICES — READ THIS
+# -----------------------------------------
+# Both printers expose a USB-serial device, and they are typically *identical*
+# chips (CH340/CH9102, VID:PID 1a86:7523 / 1a86:55d4). That makes /dev/ttyUSB0
+# and /dev/serial/by-id/... unreliable for telling them apart: the ttyUSB
+# numbering follows plug order, and by-id paths can collide or shift when you
+# move a cable.
+#
+# The robust fix is to pin each printer to a fixed USB port and create a stable
+# symlink per printer with udev (see udev/99-octoprint-serial.rules):
+#
+#     /dev/octoprint-cr6se   -> the CR-6 SE
+#     /dev/octoprint-e3pro   -> the Ender 3 Pro
+#
+# 1. Plug each printer into its own port and run ./scripts/find-printers.sh
+# 2. Install the udev rules and fill in .env with the values it prints
+#
+# SETUP INSTRUCTIONS
+# ------------------
+# 1. Copy .env.example to .env and fill in the serial devices and timezone:
+#      cp .env.example .env
+#
+# 2. Discover the printers and install stable device names:
+#      sudo ./scripts/find-printers.sh --print-udev > udev/99-octoprint-serial.rules
+#      sudo cp udev/99-octoprint-serial.rules /etc/udev/rules.d/
+#      sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# 3. Start both instances:
+#      docker compose up -d
+#
+# 4. Open each printer's UI and finish first-run setup:
+#      http://<pi-ip>:5000   -> Creality CR-6 SE
+#      http://<pi-ip>:5001   -> Creality Ender 3 Pro
+#
+# 5. Verify:
+#      docker compose logs -f octoprint-cr6se
+
+services:
+  # Creality CR-6 SE
+  # ---------------
+  # 300x300x300 build volume, direct drive, stock Marlin firmware.
+  # Marlin has no START_PRINT macro, so leave "Start G-code" EMPTY in the
+  # printer profile (see README "First-run setup").
+  octoprint-cr6se:
+    image: octoprint/octoprint:1.11.8
+    container_name: octoprint-cr6se
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      # Set ENABLE_MJPG_STREAMER=true in .env only if you attach a USB webcam
+      # and uncomment the video device below.
+      - ENABLE_MJPG_STREAMER=${ENABLE_MJPG_STREAMER:-false}
+      - CAMERA_DEV=${CAMERA_DEV:-/dev/video0}
+    ports:
+      # OctoPrint listens on port 80 *inside* the container.
+      - "${CR6SE_PORT:-5000}:80"
+    volumes:
+      # Everything OctoPrint persists: config.yaml, plugins, uploads, logs,
+      # timelapse videos. Created by the container on first run.
+      - ./data/cr6se:/octoprint
+      # Timelapse videos are the one thing that grows without bound. Point them
+      # at a drive with room by uncommenting (the directory must exist):
+      # - ${UPLOADS_PATH:-/mnt/storage/octoprint/cr6se}:/octoprint/uploads
+    devices:
+      # Stable path from udev, mapped to the identical path in the container so
+      # the serial port you pick in the OctoPrint UI never differs per host.
+      - "${CR6SE_SERIAL_DEVICE}:${CR6SE_SERIAL_DEVICE}"
+      # USB webcam (optional):
+      # - /dev/video0:/dev/video0
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "10"
+        max-size: "200k"
+
+  # Creality Ender 3 Pro (direct drive extruder)
+  # ------------------------------------------
+  # 220x220x250 build volume. Direct drive means a short, firm retraction —
+  # see README "Direct drive notes" for the value to use in your slicer.
+  octoprint-e3pro:
+    image: octoprint/octoprint:1.11.8
+    container_name: octoprint-e3pro
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - ENABLE_MJPG_STREAMER=${ENABLE_MJPG_STREAMER:-false}
+      - CAMERA_DEV=${CAMERA_DEV:-/dev/video0}
+    ports:
+      - "${ENDER3PRO_PORT:-5001}:80"
+    volumes:
+      - ./data/e3pro:/octoprint
+      # - ${UPLOADS_PATH:-/mnt/storage/octoprint/e3pro}:/octoprint/uploads
+    devices:
+      - "${ENDER3PRO_SERIAL_DEVICE}:${ENDER3PRO_SERIAL_DEVICE}"
+      # - /dev/video0:/dev/video0
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "10"
+        max-size: "200k"
+
+  # Configuration editor (optional)
+  # -------------------------------
+  # A browser-based editor for hand-editing config.yaml when the UI is not
+  # enough. Useful once, then stop it:
+  #   docker compose up -d config-editor   -> http://<pi-ip>:8443/?folder=/octoprint
+  #   docker compose stop config-editor && docker compose rm -f config-editor
+  #
+  # config-editor:
+  #   image: lscr.io/linuxserver/code-server:latest
+  #   container_name: octoprint-config-editor
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - octoprint-cr6se
+  #     - octoprint-e3pro
+  #   environment:
+  #     - PUID=0
+  #     - PGID=0
+  #     - TZ=${TZ}
+  #   ports:
+  #     - "8443:8443"
+  #   volumes:
+  #     - ./data/cr6se:/octoprint
+  #     - ./data/e3pro:/octoprint

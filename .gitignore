@@ -1,0 +1,14 @@
+# Local settings and per-host serial paths
+.env
+
+# OctoPrint's persistent data (config.yaml, plugins, uploads, timelapse, logs).
+# Created by the containers on first run — never commit.
+data/
+
+# Local backups from scripts/backup.sh
+backups/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
